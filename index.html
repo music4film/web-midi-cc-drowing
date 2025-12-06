@@ -1,0 +1,372 @@
+<meta charset="UTF-8" />
+<title></title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<style type="text/css">html, body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      overflow: hidden;
+      font-family: sans-serif;
+      background-color: #f9f9f9;
+    }
+    #canvasWrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      box-sizing: border-box;
+      padding: 20px;
+    }
+    #drawCanvas {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 9 / 16;
+      max-height: 100vh;
+      border: 1px solid #000;
+      background-color: white;
+      touch-action: none;
+      display: block;
+    }
+    #controls {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  background-color: rgba(255,255,255,0.9);
+  padding: 4px 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 20;
+  display: flex;
+  flex-wrap: nowrap; /* 줄바꿈 허용안함 */
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .dropbtn {
+      background-color: #ffffff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 70px;
+      text-align: left;
+    }
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      background-color: white;
+      min-width: 180px;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: 0px 8px 16px rgba(0,0,0,0.1);
+      z-index: 30;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+    }
+    .dropdown-content div {
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .dropdown-content div:hover {
+      background-color: #f1f1f1;
+    }
+    .dropdown.show .dropdown-content {
+      display: block;
+    }
+    .marker {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+    }
+    .fade {
+      transition: opacity 1s ease;
+      opacity: 0.5;
+    }
+    #canvasCCDisplay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: Arial, sans-serif;
+      font-weight: bold;
+      font-size: 32px;
+      color: rgba(0, 0, 0, 0.3);
+      text-align: center;
+      white-space: pre-line;
+      line-height: 2;
+      pointer-events: none;
+      z-index: 15;
+    }
+    #resetButton {
+      background-color: #ffffff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 40px;
+      text-align: center;
+    }
+</style>
+<div id="controls">
+<div class="dropdown" id="dropdownX"><button class="dropbtn">X: Off ▾</button>
+<div class="dropdown-content" id="dropdownContentX">&nbsp;</div>
+</div>
+
+<div class="dropdown" id="dropdownY"><button class="dropbtn">Y: Off ▾</button>
+
+<div class="dropdown-content" id="dropdownContentY">&nbsp;</div>
+</div>
+
+<div class="dropdown" id="dropdownCh"><button class="dropbtn">Ch: 기본 ▾</button>
+
+<div class="dropdown-content" id="dropdownContentCh">&nbsp;</div>
+</div>
+<button id="resetButton">리셋</button></div>
+
+<div id="canvasWrapper"><canvas id="drawCanvas"></canvas>
+
+<div id="canvasCCDisplay">&nbsp;</div>
+</div>
+<script>
+    let midiAccess = null;
+    let midiOutput = null;
+    let ccX = 'off';
+let ccY = 'off';
+
+    let midiChannel = '1';
+
+    const ccNames = {
+      1: "Mod Wheel", 2: "Breath", 4: "Foot Ctrl",
+      5: "Portamento", 6: "Data Entry", 7: "Volume", 8: "Balance",
+      10: "Pan", 11: "Expression", 64: "Sustain", 65: "Portamento On/Off",
+      66: "Sostenuto", 67: "Soft Pedal", 91: "Reverb", 93: "Chorus",
+      120: "All Sound Off", 121: "Reset Ctrl", 123: "All Notes Off"
+    };
+
+    navigator.requestMIDIAccess().then(midi => {
+      midiAccess = midi;
+      const outputs = Array.from(midiAccess.outputs.values());
+      if (outputs.length > 0) {
+        midiOutput = outputs[0];
+        console.log("MIDI 출력 연결됨:", midiOutput.name);
+      } else {
+        alert("MIDI 출력 장치를 찾을 수 없습니다. USB가 연결되어 있어야 합니다.");
+      }
+    }, () => alert("MIDI 접근에 실패했습니다."));
+
+    function sendCCorPitch(type, value) {
+  if (!midiOutput || type === 'off') return;
+
+  let channels = [];
+
+  if (midiChannel === 'any') {
+    channels = [...Array(16).keys()];
+  } else if (midiChannel.startsWith('grp_')) {
+    const [start, end] = midiChannel.split('_').slice(1).map(n => parseInt(n));
+    channels = [];
+    for (let i = start; i <= end; i++) channels.push(i - 1);  // MIDI 채널은 0~15
+  } else {
+    channels = [parseInt(midiChannel) - 1];
+  }
+
+  channels.forEach(channel => {
+    if (type === 'pitchbend') {
+      const val14 = Math.floor((value / 127) * 16383);
+      const lsb = val14 & 0x7F;
+      const msb = (val14 >> 7) & 0x7F;
+      midiOutput.send([0xE0 | channel, lsb, msb]);
+    } else {
+      midiOutput.send([0xB0 | channel, type, value]);
+    }
+  });
+}
+
+
+    const dropdownX = document.getElementById("dropdownX");
+    const dropdownY = document.getElementById("dropdownY");
+    const dropdownCh = document.getElementById("dropdownCh");
+    const contentX = document.getElementById("dropdownContentX");
+    const contentY = document.getElementById("dropdownContentY");
+    const contentCh = document.getElementById("dropdownContentCh");
+    const btnX = dropdownX.querySelector("button");
+    const btnY = dropdownY.querySelector("button");
+    const btnCh = dropdownCh.querySelector("button");
+
+    function toggleDropdown(dropdown) {
+      closeAllDropdowns();
+      dropdown.classList.toggle("show");
+    }
+    function closeAllDropdowns() {
+      dropdownX.classList.remove("show");
+      dropdownY.classList.remove("show");
+      dropdownCh.classList.remove("show");
+    }
+
+    function fillDropdown(contentEl, currentVal, setValCallback, labelPrefix, btnEl, options) {
+      contentEl.innerHTML = '';
+      options.forEach(entry => {
+        const div = document.createElement("div");
+        div.textContent = entry.label;
+        if (entry.value === currentVal) div.style.fontWeight = "bold";
+        div.addEventListener("click", () => {
+          setValCallback(entry.value);
+          btnEl.textContent = `${labelPrefix}: ${entry.label} ▾`;
+          closeAllDropdowns();
+        });
+        contentEl.appendChild(div);
+      });
+    }
+
+    btnX.addEventListener("click", () => toggleDropdown(dropdownX));
+    btnY.addEventListener("click", () => toggleDropdown(dropdownY));
+    btnCh.addEventListener("click", () => toggleDropdown(dropdownCh));
+
+    fillDropdown(contentX, ccX, val => ccX = val, "X", btnX, [
+      { label: "Off", value: 'off' },
+      { label: "Pitch Bend", value: 'pitchbend' },
+      ...Array.from({ length: 128 }, (_, i) => ({
+        label: ccNames[i] ? `CC#${i} - ${ccNames[i]}` : `CC#${i}`,
+        value: i
+      }))
+    ]);
+
+    fillDropdown(contentY, ccY, val => ccY = val, "Y", btnY, [
+      { label: "Off", value: 'off' },
+      { label: "Pitch Bend", value: 'pitchbend' },
+      ...Array.from({ length: 128 }, (_, i) => ({
+        label: ccNames[i] ? `CC#${i} - ${ccNames[i]}` : `CC#${i}`,
+        value: i
+      }))
+    ]);
+
+   fillDropdown(contentCh, midiChannel, val => midiChannel = val, "Ch", btnCh, [
+  { label: "기본 (1)", value: '1' },
+  ...Array.from({ length: 15 }, (_, i) => ({
+    label: `Ch ${i + 2}`,
+    value: String(i + 2)
+  })),
+  { label: "any", value: 'any' },
+  { label: "Ch 1-4", value: 'grp_1_4' },
+  { label: "Ch 5-8", value: 'grp_5_8' },
+  { label: "Ch 9-12", value: 'grp_9_12' },
+  { label: "Ch 13-16", value: 'grp_13_16' }
+]);
+
+
+
+    window.addEventListener("click", e => {
+      if (![dropdownX, dropdownY, dropdownCh].some(d => d.contains(e.target))) closeAllDropdowns();
+    });
+
+    const canvas = document.getElementById("drawCanvas");
+    const ctx = canvas.getContext("2d");
+    let startMarker = null, endMarker = null;
+
+    function resizeCanvas() {
+      const width = canvas.clientWidth;
+      const height = width * (16 / 9);
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    function getCCFromX(x) {
+      return Math.max(0, Math.min(127, Math.round((x / canvas.width) * 127)));
+    }
+    function getCCFromY(y) {
+      return Math.max(0, Math.min(127, Math.round(127 - (y / canvas.height) * 127)));
+    }
+
+    function createMarker(x, y, isStart) {
+      const marker = document.createElement("div");
+      marker.className = "marker";
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.clientWidth / canvas.width;
+      const scaleY = canvas.clientHeight / canvas.height;
+      marker.style.left = `${rect.left + x * scaleX}px`;
+      marker.style.top = `${rect.top + y * scaleY}px`;
+      marker.style.backgroundColor = isStart ? "red" : "blue";
+      if (isStart) setTimeout(() => marker.classList.add("fade"), 0);
+      document.body.appendChild(marker);
+      return marker;
+    }
+
+    let drawing = false, lastX = null, lastY = null;
+
+    canvas.addEventListener("pointerdown", e => {
+      drawing = true;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / canvas.clientWidth;
+      const scaleY = canvas.height / canvas.clientHeight;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      lastX = x; lastY = y;
+      if (startMarker) startMarker.remove();
+      startMarker = createMarker(x, y, true);
+    });
+
+    canvas.addEventListener("pointermove", e => {
+      if (!drawing) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / canvas.clientWidth;
+      const scaleY = canvas.height / canvas.clientHeight;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      ctx.strokeStyle = "blue";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      lastX = x; lastY = y;
+      const ccValX = getCCFromX(x);
+      const ccValY = getCCFromY(y);
+      sendCCorPitch(ccX, ccValX);
+      sendCCorPitch(ccY, ccValY);
+      updateDisplay(ccValX, ccValY);
+    });
+
+    canvas.addEventListener("pointerup", () => {
+      drawing = false;
+      if (endMarker) endMarker.remove();
+      endMarker = createMarker(lastX, lastY, false);
+    });
+    canvas.addEventListener("pointerleave", () => drawing = false);
+
+    function updateDisplay(xVal, yVal) {
+      const paddedX = String(xVal).padStart(3, '0');
+      const paddedY = String(yVal).padStart(3, '0');
+      document.getElementById("canvasCCDisplay").textContent = `[ X = ${paddedX} ]\n[ Y = ${paddedY} ]`;
+    }
+
+    document.getElementById("resetButton").addEventListener("click", () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (startMarker) startMarker.remove();
+      if (endMarker) endMarker.remove();
+      updateDisplay(0, 0);
+      startMarker = null; endMarker = null;
+      drawing = false;
+    });
+
+    function fadeTrail() {
+      ctx.fillStyle = "rgba(255,255,255,0.05)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      requestAnimationFrame(fadeTrail);
+    }
+    fadeTrail();
+  </script>
